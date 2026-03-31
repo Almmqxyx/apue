@@ -14,6 +14,7 @@
 #include <getopt.h>
 #include <netdb.h>
 #include <sqlite3.h>
+#include <signal.h>
 
 sqlite3     *cache_db=NULL;
 
@@ -309,6 +310,8 @@ int main(int argc,char **argv)
     char current_time[30];
     struct addrinfo hints, *result;
 
+    signal(SIGPIPE, SIG_IGN);
+
     while((ch=getopt_long(argc,argv,"I:i:p:r:R:h",opts,NULL))!=-1)
     {
         switch(ch)
@@ -390,15 +393,42 @@ int main(int argc,char **argv)
         if(connected)
         {
             int len = strlen(report);
+	    errno = 0; //发送前重置errno
             int result = write(sockfd, report, len);
             
-            if(result == len)
+            if(result > 0 && result == len && errno == 0)
             {
-                printf("Temperature %.2f℃ sent successfully\n", temp);
+		    // 添加连接存活检测
+                char check_buf[1];
+                ssize_t check_rv = recv(sockfd, check_buf, 1, MSG_PEEK | MSG_DONTWAIT);
+                if(check_rv == 0)
+                {
+                    // 收到FIN，连接已断开，缓存并重连
+                    printf("Server closed connection, data not delivered\n");
+                    save_to_cache(device_id, current_time, temp);
+                    close(sockfd);
+                    sockfd = -1;
+                    connected = 0;
+                }
+                else if(check_rv < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
+                {
+                    // 其他连接错误
+                    printf("Connection error: %s\n", strerror(errno));
+                    save_to_cache(device_id, current_time, temp);
+                    close(sockfd);
+                    sockfd = -1;
+                    connected = 0;
+                }
+                else
+                {
+                    printf("Temperature %.2f℃ sent successfully\n", temp);
+                }
+               
             }
             else
             {
-                printf("Failed to send data: %s\n", strerror(errno));
+                printf("Failed to send data: %s (result=%d, errno=%d)\n", 
+                   strerror(errno), result, errno);
                 printf("Saving to cache and closing connection...\n");
                 
                 save_to_cache(device_id, current_time, temp);
