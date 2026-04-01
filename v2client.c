@@ -17,6 +17,21 @@
 #include <signal.h>
 
 sqlite3     *cache_db=NULL;
+#define HEARTBEAT_INTERVAL 3
+void send_heartbeat(int sockfd)
+{
+    if(sockfd < 0) return;
+
+    const char *heartbeat = "{}"; // 空 JSON 心跳包
+    int ret = write(sockfd, heartbeat, strlen(heartbeat));
+
+    if(ret < 0)
+    {
+        printf("Heartbeat failed, connection lost\n");
+        close(sockfd);
+        sockfd = -1;
+    }
+}
 
 int init_cache_database(void)
 {
@@ -353,6 +368,8 @@ int main(int argc,char **argv)
         return 1;
     }
 
+    time_t last_heartbeat = 0;
+
     int connected=0;
     get_devid(device_id, 20);
     printf("Device ID: %s\n", device_id);
@@ -361,14 +378,15 @@ int main(int argc,char **argv)
 
     while(1)
     {
-        if(ds18b20_get_temperature(&temp)<0)
+	    
+	if(ds18b20_get_temperature(&temp)<0)
         {
             printf("Get ds18b20 temperature failure !\n");
-            sleep(interval);
+            
             continue;
         }
 
-        time_t now = time(NULL);
+	time_t now = time(NULL);
         struct tm *t = localtime(&now);
         strftime(current_time, sizeof(current_time), "%Y-%m-%d %H:%M:%S", t);
 
@@ -388,6 +406,7 @@ int main(int argc,char **argv)
                 printf("Connection established\n");
 
                 send_cached_data(sockfd);
+		last_heartbeat = time(NULL);
             }
             else
             {
@@ -449,7 +468,22 @@ int main(int argc,char **argv)
             printf("Offline mode: Saving temperature %.2f℃ to cache\n", temp);
             save_to_cache(device_id, current_time, temp);
         }
-        sleep(interval);
+        // 分段睡眠，保证心跳正常发送，不被卡住
+	int wait_sec = interval;
+	while (wait_sec > 0)
+	{
+    		sleep(1);      // 每次睡1秒
+    		wait_sec--;
+
+    		// 每3秒发一次心跳（不会被阻塞）
+    		time_t now = time(NULL);
+    		if (connected && sockfd >= 0 && (now - last_heartbeat) >= HEARTBEAT_INTERVAL)
+    		{
+        		send_heartbeat(sockfd);
+        		last_heartbeat = now;
+    		}
+
+	}
     }
     
     
