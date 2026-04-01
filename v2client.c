@@ -169,7 +169,10 @@ int send_cached_data(int sockfd)
         float temp = sqlite3_column_double(stmt, 3);
         
         char report[100];
-        snprintf(report, sizeof(report), "%s,%s,%.2f", device_id, time_str, temp);
+       // snprintf(report, sizeof(report), "%s,%s,%.2f", device_id, time_str, temp);
+	snprintf(report, sizeof(report),
+	"{\"device_id\":\"%s\",\"time\":\"%s\",\"temp\":%.2f}",
+	device_id, time_str, temp);
 
         int len =strlen(report);
         int result=write(sockfd,report,len);
@@ -369,7 +372,10 @@ int main(int argc,char **argv)
         struct tm *t = localtime(&now);
         strftime(current_time, sizeof(current_time), "%Y-%m-%d %H:%M:%S", t);
 
-        snprintf(report, sizeof(report), "%s,%s,%.2f", device_id, current_time, temp);
+        //snprintf(report, sizeof(report), "%s,%s,%.2f", device_id, current_time, temp);
+	snprintf(report, sizeof(report),
+	"{\"device_id\":\"%s\",\"time\":\"%s\",\"temp\":%.2f}\n",
+	device_id, current_time, temp);
 
         if(sockfd < 0 || !connected)
         {
@@ -447,8 +453,10 @@ int main(int argc,char **argv)
     }
     
     
-    if(sockfd >= 0) close(sockfd);
-    if(cache_db != NULL) sqlite3_close(cache_db);
+    if(sockfd >= 0)
+	    close(sockfd);
+    if(cache_db != NULL)
+	    sqlite3_close(cache_db);
     return 0;
 }
 
