@@ -16,6 +16,7 @@
 #include <pthread.h>
 #include <sys/epoll.h>
 #include <sqlite3.h> 
+#include <cjson/cJSON.h>
 
 int         g_stop = 0;
 #define BACKLOG             10
@@ -100,11 +101,36 @@ void save_to_db(char *data)
         }
         p++;
     }
+    //Cjson analizy json
+    cJSON *root = cJSON_Parse(data);
+    if(root == NULL)
+    {
+	    printf("JSON parse error!\n");
+	    return ;
+    }
+
+    cJSON *id = cJSON_GetObjectItem(root, "device_id");
+    cJSON *t  = cJSON_GetObjectItem(root, "time");
+    cJSON *tp = cJSON_GetObjectItem(root, "temp");
+
+    if (!id || !t || !tp) 
+    {
+        printf("JSON missing fields\n");
+        cJSON_Delete(root);
+        return;
+    }
+
+    snprintf(device_id, sizeof(device_id), "%s", id->valuestring);
+    snprintf(time_str, sizeof(time_str), "%s", t->valuestring);
+    temp = tp->valuedouble;
+
+    cJSON_Delete(root);
     
-    printf("Raw data received: [%s]\n", data);
+    printf("JSON解析成功: device=%s, time=%s, temp=%.2f\n",
+           device_id, time_str, temp);
     
     // 简单解析
-    int result = sscanf(data, "%31[^,],%31[^,],%f", device_id, time_str, &temp);
+   /* int result = sscanf(data, "%31[^,],%31[^,],%f", device_id, time_str, &temp);
     if (result != 3) 
     {
         printf("data error: %s (parsed %d items)\n", data, result);
@@ -113,7 +139,8 @@ void save_to_db(char *data)
     
     printf("data Analysis success: device=%s, time=%s, temperature=%.2f ℃\n", 
            device_id, time_str, temp);
-    
+    */
+
     // 构造SQL语句
     snprintf(sql, sizeof(sql),
         "INSERT INTO temperature (device_id, time, temp) VALUES ('%s', '%s', %.2f)",
@@ -125,8 +152,8 @@ void save_to_db(char *data)
     if (rc != SQLITE_OK) 
 	{
         printf("SQLite error (code %d): %s\n", rc, err_msg);
-        if
-	 (err_msg) sqlite3_free(err_msg);
+        if (err_msg)
+	       	sqlite3_free(err_msg);
     	}	 
 	else 
 	{
