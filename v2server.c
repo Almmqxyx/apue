@@ -15,74 +15,63 @@
 #include <sys/wait.h>
 #include <pthread.h>
 #include <sys/epoll.h>
-#include <sqlite3.h> 
+// #include <sqlite3.h> 
+#include <mysql/mysql.h>
 #include <cjson/cJSON.h>
 
 int         g_stop = 0;
 #define BACKLOG             10
 #define MAX_EVENTS          4096
 
-sqlite3 *db = NULL;
+//sqlite3 *db = NULL;
+MYSQL *g_db = NULL;
 
-// 表结构信息回调函数
-static int callback_print_table_info(void *NotUsed, int argc, char **argv, char **azColName)
-{
-    for(int i = 0; i < argc; i++) {
-        printf("%s = %s\n", azColName[i], argv[i] ? argv[i] : "NULL");
-    }
-    printf("\n");
-    return 0;
-}
+#define DB_HOST     "127.0.0.1"
+#define DB_PORT     3306
+#define DB_USER     "test"
+#define DB_PASS     "123456"
+#define DB_NAME     "myproject"
 
-int init_sqlite3(void)
+int init_mysql(void)
 {
-    int rc;
-    char *err_msg = NULL;
-    
-    // 删除旧的数据库文件以确保重新创建
-    system("rm -f temperature.db");
-    
-    rc = sqlite3_open("temperature.db", &db);
-    if(rc != SQLITE_OK)
+    g_db = mysql_init(NULL);
+    if (!g_db)
     {
-        printf("sqlite3 open failure: %s\n", sqlite3_errmsg(db));
+        printf("mysql_init failed\n");
         return -1;
     }
-    
-    printf("SQLite version: %s\n", sqlite3_libversion());
-    printf("Database opened successfully\n");
-    
-    char *sql = 
-        "CREATE TABLE IF NOT EXISTS temperature ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "device_id TEXT NOT NULL,"
-        "time TEXT NOT NULL,"
-        "temp REAL NOT NULL);";
-    
-    rc = sqlite3_exec(db, sql, NULL, 0, &err_msg);
-    if(rc != SQLITE_OK)
+
+    if (!mysql_real_connect(g_db, DB_HOST, DB_USER, DB_PASS, DB_NAME, DB_PORT, NULL, 0))
     {
-        printf("create table failure: %s\n", err_msg);
-        sqlite3_free(err_msg);
+        printf("mysql connect failed: %s\n", mysql_error(g_db));
         return -2;
     }
-    
-    printf("Table creation successful\n");
-    
-    // 查看表结构
-    sql = "PRAGMA table_info(temperature);";
-    rc = sqlite3_exec(db, sql, callback_print_table_info, 0, &err_msg);
-    if(rc != SQLITE_OK) {
-        printf("Failed to get table info: %s\n", err_msg);
-        sqlite3_free(err_msg);
+
+    printf("MySQL connected successfully!\n");
+
+    char *sql =
+        "CREATE TABLE IF NOT EXISTS temperature ("
+        "id INT AUTO_INCREMENT PRIMARY KEY,"
+        "device_id VARCHAR(64) NOT NULL,"
+        "time VARCHAR(64) NOT NULL,"
+        "temp FLOAT NOT NULL"
+        ");";
+
+    if (mysql_query(g_db, sql))
+    {
+        printf("create table failed: %s\n", mysql_error(g_db));
+        return -3;
     }
-    
+
+    printf("Table ready\n");
     return 0;
 }
+
 
 void save_to_db(char *data)
 {
-    if (db == NULL) {
+    if (g_db == NULL) 
+    {
         printf("ERROR: Database not initialized\n");
         return;
     }
@@ -92,10 +81,11 @@ void save_to_db(char *data)
     char sql[512];
     char *err_msg = NULL;
     
-    // 去掉换行符
     char *p = data;
-    while (*p) {
-        if (*p == '\r' || *p == '\n') {
+    while (*p) 
+    {
+        if (*p == '\r' || *p == '\n') 
+	{
             *p = '\0';
             break;
         }
@@ -129,7 +119,7 @@ void save_to_db(char *data)
     printf("JSON解析成功: device=%s, time=%s, temp=%.2f\n",
            device_id, time_str, temp);
     
-    // 简单解析
+  
    /* int result = sscanf(data, "%31[^,],%31[^,],%f", device_id, time_str, &temp);
     if (result != 3) 
     {
@@ -141,24 +131,19 @@ void save_to_db(char *data)
            device_id, time_str, temp);
     */
 
-    // 构造SQL语句
+    
     snprintf(sql, sizeof(sql),
         "INSERT INTO temperature (device_id, time, temp) VALUES ('%s', '%s', %.2f)",
         device_id, time_str, temp);
     
-    printf("SQL to execute: %s\n", sql);
-    
-    int rc = sqlite3_exec(db, sql, NULL, NULL, &err_msg);
-    if (rc != SQLITE_OK) 
-	{
-        printf("SQLite error (code %d): %s\n", rc, err_msg);
-        if (err_msg)
-	       	sqlite3_free(err_msg);
-    	}	 
-	else 
-	{
-        	printf("Data saved successfully!\n");        
-        }
+    if (mysql_query(g_db, sql))
+    {
+        printf("insert failed: %s\n", mysql_error(g_db));
+    }
+    else
+    {
+        printf("Data saved to MySQL success!\n");
+    }
     
 }
 
@@ -260,11 +245,10 @@ int main(int argc, char **argv)
     signal(SIGSEGV, sig_handler);
     signal(SIGPIPE, sig_handler);
 
-    // 初始化数据库
-    printf("Initializing database...\n");
-    if(init_sqlite3() != 0)
+    printf("Initializing MySQL...\n");
+    if(init_mysql() != 0)
     {
-        printf("Failed to initialize SQLite database\n");
+        printf("Failed to initialize MySQL\n");
         return 1;
     }
     printf("Database initialized successfully\n");
@@ -358,8 +342,9 @@ int main(int argc, char **argv)
     
     close(epfd);
     
-    if(db != NULL) {
-        sqlite3_close(db);
+    if(g_db != NULL) 
+    {
+        mysql_close(g_db);
     }
     
     return 0;
